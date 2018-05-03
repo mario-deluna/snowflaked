@@ -69,11 +69,9 @@ ZEND_GET_MODULE(snowflake)
 #endif
 
 void add_constant_long(zend_class_entry *ce, char *name, int value) {
-	zval *constval;
-	constval = pemalloc(sizeof(zval), 1);
-	INIT_PZVAL(constval);
-	ZVAL_LONG(constval, value);
-	zend_hash_add(&ce->constants_table, name, 1 + strlen(name), (void*)&constval, sizeof(zval*), NULL);
+	zval constval;
+	ZVAL_LONG(&constval, value);
+	zend_hash_str_add_new(&ce->constants_table, name, 1 + strlen(name), &constval);
 }
 
 /**
@@ -174,7 +172,8 @@ PHPAPI SnowflakeSock* snowflake_sock_create(char *host, int host_len, unsigned s
 
 PHPAPI int snowflake_sock_connect(SnowflakeSock *snowflake_sock TSRMLS_DC) {
 	struct timeval tv, *tv_ptr = NULL;
-	char *host = NULL, *hash_key = NULL, *errstr = NULL;
+	char *host = NULL, *hash_key = NULL;
+	zend_string *errstr;
 	int host_len, err = 0;
 
 	if (snowflake_sock->stream != NULL) {
@@ -189,7 +188,7 @@ PHPAPI int snowflake_sock_connect(SnowflakeSock *snowflake_sock TSRMLS_DC) {
 	if (tv.tv_sec != 0) {
 		tv_ptr = &tv;
 	}
-	snowflake_sock->stream = php_stream_xport_create(host, host_len, ENFORCE_SAFE_MODE, STREAM_XPORT_CLIENT | STREAM_XPORT_CONNECT, hash_key, tv_ptr, NULL, &errstr, &err);
+	snowflake_sock->stream = php_stream_xport_create(host, host_len, 0, STREAM_XPORT_CLIENT | STREAM_XPORT_CONNECT, hash_key, tv_ptr, NULL, &errstr, &err);
 
 	efree(host);
 
@@ -285,10 +284,10 @@ PHPAPI void snowflake_check_eof(SnowflakeSock *snowflake_sock TSRMLS_DC) {
 }
 
 PHPAPI int snowflake_sock_get(zval *id, SnowflakeSock **snowflake_sock TSRMLS_DC) {
-	zval **socket;
+	zval* socket;
 	int resource_type;
 
-	if (Z_TYPE_P(id) != IS_OBJECT || zend_hash_find(Z_OBJPROP_P(id), "socket", sizeof("socket"), (void **) &socket) == FAILURE) {
+	if (Z_TYPE_P(id) != IS_OBJECT || (socket = zend_hash_str_find(Z_OBJPROP_P(id), "socket", sizeof("socket")-1)) != NULL) {
 		return -1;
 	}
 
@@ -312,10 +311,10 @@ PHPAPI zend_class_entry *snowflake_get_exception_base(int root TSRMLS_DC) {
 #if HAVE_SPL
 	if (!root) {
 			if (!spl_ce_RuntimeException) {
-					zend_class_entry **pce;
-					if (zend_hash_find(CG(class_table), "runtimeexception", sizeof("RuntimeException"), (void **) &pce) == SUCCESS) {
-							spl_ce_RuntimeException = *pce;
-							return *pce;
+					zval* pce;
+					if ((pce = zend_hash_str_find(CG(class_table), "runtimeexception", sizeof("RuntimeException")-1)) != NULL) {
+							spl_ce_RuntimeException = pce->value.ce;
+							return pce->value.ce;
 					}
 			} else {
 					return spl_ce_RuntimeException;
@@ -329,7 +328,7 @@ PHPAPI zend_class_entry *snowflake_get_exception_base(int root TSRMLS_DC) {
 #endif
 }
 
-static void snowflake_destructor_snowflake_sock(zend_rsrc_list_entry * rsrc TSRMLS_DC) {
+static void snowflake_destructor_snowflake_sock(zend_resource * rsrc TSRMLS_DC) {
 	SnowflakeSock *snowflake_sock = (SnowflakeSock *) rsrc->ptr;
 	snowflake_sock_disconnect(snowflake_sock TSRMLS_CC);
 	snowflake_free_socket(snowflake_sock);
@@ -344,8 +343,7 @@ PHP_MINIT_FUNCTION(snowflake) {
 	INIT_CLASS_ENTRY(snowflake_exception_class_entry, "SnowflakeException", NULL);
 	snowflake_exception_ce = zend_register_internal_class_ex(
 		&snowflake_exception_class_entry,
-		snowflake_get_exception_base(0 TSRMLS_CC),
-		NULL TSRMLS_CC
+		snowflake_get_exception_base(0 TSRMLS_CC)
 	);
 
 	le_snowflake_sock = zend_register_list_destructors_ex(
@@ -551,7 +549,7 @@ PHP_METHOD(Snowflake, get) {
             val = emalloc(pos - cur + 1);
             memcpy(val, cur, pos-cur);
             val[pos-cur] = 0;
-            RETURN_STRING(val, 0);
+            RETURN_STRING(val);
         }
 	
 }
@@ -623,7 +621,7 @@ PHP_METHOD(Snowflake, info) {
 			add_assoc_long(return_value, key, atol(value));
 			efree(value);
 		} else {
-			add_assoc_string(return_value, key, value, 0);
+			add_assoc_string(return_value, key, value);
 		}
 		efree(key);
 	}
